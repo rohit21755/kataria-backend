@@ -1,0 +1,158 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  OFFICE_STAFF
+  FIELD_WORKER
+  CLIENT
+}
+
+model Office {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  name         String
+  address      String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  users        User[]
+  transactions Transaction[]
+}
+
+model User {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  username         String   @unique
+  passwordHash     String
+  role             Role
+  firstName        String
+  lastName         String
+  phone            String?
+  officeId         String?  @db.ObjectId
+  office           Office?  @relation(fields: [officeId], references: [id])
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  transactionsMade     Transaction[] @relation("PerformedBy")
+  clientProfile        ClientProfile?
+  clientsCreated       ClientProfile[] @relation("CreatedByUser")
+  ledgerEntries        LedgerEntry[]
+  deviceFingerprints   DeviceFingerprint[]
+  biometricFingerprints BiometricFingerprint[]
+}
+
+model DeviceFingerprint {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  user      User     @relation(fields: [userId], references: [id])
+  visitorId String   @unique
+  createdAt DateTime @default(now())
+}
+
+model BiometricFingerprint {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String   @db.ObjectId
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  credentialId String   @unique
+  publicKey    String
+  counter      Int
+  transports   String[]
+  createdAt    DateTime @default(now())
+}
+
+model ClientProfile {
+  id                  String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId              String   @unique @db.ObjectId
+  user                User     @relation(fields: [userId], references: [id])
+  type                String   @default("CLIENT") // "CLIENT" | "AGENT"
+  address             String?
+  idProofType         String?
+  idProofNumber       String?
+  fingerprintVerified Boolean  @default(false)
+  notes               String?
+  createdById         String?  @db.ObjectId
+  createdByUser       User?    @relation("CreatedByUser", fields: [createdById], references: [id])
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  transactions        Transaction[] @relation("ClientTransactions")
+}
+
+// direction: IN = money coming in, OUT = money going out
+// method: CASH | BANK | CASH_BANK
+// For CASH_BANK: cashAmount + bankAmount must equal amount
+// For BANK or CASH_BANK: bankAccountNumber, bankName, bankReference required
+model Transaction {
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  direction         String   // "IN" | "OUT"
+  method            String   // "CASH" | "BANK" | "CASH_BANK"
+  amount            Float
+  cashAmount        Float?
+  bankAmount        Float?
+  bankAccountNumber String?
+  bankName          String?
+  bankReference     String?
+  ifscCode          String?
+  companyBankAccount String?
+  status            String   @default("COMPLETED") // "COMPLETED" | "REVERSED"
+  description       String?
+
+  agentName         String?
+  agentPhone        String?
+
+  clientId          String   @db.ObjectId
+  client            ClientProfile @relation("ClientTransactions", fields: [clientId], references: [id])
+
+  performedById     String   @db.ObjectId
+  performedBy       User     @relation("PerformedBy", fields: [performedById], references: [id])
+  performedByLabel  String   // "Admin" | full name of performer
+
+  officeId          String?  @db.ObjectId
+  office            Office?  @relation(fields: [officeId], references: [id])
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  ledgerEntries     LedgerEntry[]
+}
+
+model LedgerEntry {
+  id            String      @id @default(auto()) @map("_id") @db.ObjectId
+  userId        String      @db.ObjectId
+  user          User        @relation(fields: [userId], references: [id])
+  transactionId String      @db.ObjectId
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  debit         Float       @default(0)
+  credit        Float       @default(0)
+  balanceAfter  Float
+  createdAt     DateTime    @default(now())
+}
+
+model DailyCash {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  date           DateTime @unique
+  openingBalance Float    @default(0)
+  cashIn         Float    @default(0)
+  cashOut        Float    @default(0)
+  bankIn         Float    @default(0)
+  bankOut        Float    @default(0)
+  closingBalance Float    @default(0)
+  updatedAt      DateTime @updatedAt
+}
+
+model AuditLog {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  action      String   // "CREATE" | "UPDATE" | "DELETE" | "REVERSE"
+  entityType  String   // "TRANSACTION" | "USER" | "CLIENT" | "OFFICE"
+  entityId    String
+  performedBy String   // User ID
+  details     Json?
+  createdAt   DateTime @default(now())
+}
