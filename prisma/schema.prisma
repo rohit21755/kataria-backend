@@ -127,8 +127,8 @@ model LedgerEntry {
   id            String      @id @default(auto()) @map("_id") @db.ObjectId
   userId        String      @db.ObjectId
   user          User        @relation(fields: [userId], references: [id])
-  transactionId String      @db.ObjectId
-  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  transactionId String?     @db.ObjectId
+  transaction   Transaction? @relation(fields: [transactionId], references: [id])
   debit         Float       @default(0)
   credit        Float       @default(0)
   balanceAfter  Float

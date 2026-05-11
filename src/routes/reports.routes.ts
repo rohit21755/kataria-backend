@@ -7,7 +7,17 @@ router.use(authenticateToken);
 
 // ─── Date helpers ───────────────────────────────────────────
 
-function periodRange(period: string): { start: Date; end: Date } {
+function periodRange(period: string, startDate?: string, endDate?: string): { start: Date; end: Date } {
+  if (startDate || endDate) {
+    const start = startDate ? new Date(startDate) : new Date(0);
+    if (startDate) start.setHours(0, 0, 0, 0);
+    
+    const end = endDate ? new Date(endDate) : new Date();
+    if (endDate) end.setHours(23, 59, 59, 999);
+    
+    return { start, end };
+  }
+
   const now = new Date();
   const end = new Date();
   end.setHours(23, 59, 59, 999);
@@ -78,7 +88,9 @@ router.get('/dashboard-summary', async (req, res) => {
 
 router.get('/balance', async (req, res) => {
   const period = (req.query.period as string) || 'today';
-  const { start, end } = periodRange(period);
+  const startDate = req.query.startDate as string;
+  const endDate = req.query.endDate as string;
+  const { start, end } = periodRange(period, startDate, endDate);
 
   try {
     const transactions = await prisma.transaction.findMany({
@@ -275,6 +287,65 @@ router.get('/daily-cash', async (req, res) => {
     res.json(records);
   } catch {
     res.status(500).json({ error: 'Failed to fetch daily cash records' });
+  }
+});
+
+router.put('/daily-cash/:date', async (req, res) => {
+  const { date } = req.params;
+  const { openingBalance, closingBalance } = req.body;
+  try {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    const updated = await prisma.dailyCash.update({
+      where: { date: d },
+      data: {
+        openingBalance: openingBalance !== undefined ? Number(openingBalance) : undefined,
+        closingBalance: closingBalance !== undefined ? Number(closingBalance) : undefined,
+      }
+    });
+    res.json(updated);
+  } catch (err) {
+    res.status(400).json({ error: 'Failed to update daily cash' });
+  }
+});
+
+router.post('/daily-cash/settle', async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    let todayRecord = await prisma.dailyCash.findUnique({ where: { date: today } });
+    
+    if (!todayRecord) {
+      const lastRecord = await prisma.dailyCash.findFirst({
+        where: { date: { lt: today } },
+        orderBy: { date: 'desc' },
+      });
+      todayRecord = await prisma.dailyCash.create({
+        data: {
+          date: today,
+          openingBalance: lastRecord?.closingBalance || 0,
+          closingBalance: lastRecord?.closingBalance || 0,
+        }
+      });
+    }
+
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    const tomorrowRecord = await prisma.dailyCash.upsert({
+      where: { date: tomorrow },
+      update: { openingBalance: todayRecord.closingBalance },
+      create: {
+        date: tomorrow,
+        openingBalance: todayRecord.closingBalance,
+        closingBalance: todayRecord.closingBalance,
+      }
+    });
+
+    res.json({ message: 'Settlement completed', tomorrowRecord });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to settle daily cash' });
   }
 });
 

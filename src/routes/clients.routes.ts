@@ -83,13 +83,29 @@ router.post('/', async (req, res) => {
         },
       });
 
+      const { openingBalance, openingBalanceType } = req.body;
+      if (openingBalance && openingBalanceType) {
+        const bal = Number(openingBalance);
+        if (bal > 0) {
+          const isCredit = openingBalanceType === 'CREDIT';
+          await tx.ledgerEntry.create({
+            data: {
+              userId: user.id,
+              credit: isCredit ? bal : 0,
+              debit: isCredit ? 0 : bal,
+              balanceAfter: isCredit ? bal : -bal,
+            },
+          });
+        }
+      }
+
       await tx.auditLog.create({
         data: {
           action: 'CREATE',
           entityType: 'CLIENT',
           entityId: client.id,
           performedBy: createdById,
-          details: { firstName, lastName, phone, type },
+          details: { firstName, lastName, phone, type, openingBalance, openingBalanceType },
         },
       });
 
