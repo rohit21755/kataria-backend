@@ -158,4 +158,55 @@ router.get('/:id/transactions', async (req, res) => {
   }
 });
 
+router.delete('/:id', authorize(['SUPER_ADMIN', 'OFFICE_STAFF']), async (req, res) => {
+  const id = req.params.id as string;
+  try {
+    await prisma.$transaction(async (tx) => {
+      const client = await tx.clientProfile.findUnique({
+        where: { id },
+        include: { user: true },
+      });
+
+      if (!client) {
+        throw new Error('Client not found');
+      }
+
+      await tx.ledgerEntry.deleteMany({
+        where: { userId: client.userId },
+      });
+
+      const txs = await tx.transaction.findMany({
+        where: { clientId: id },
+      });
+
+      const txIds = txs.map(t => t.id);
+
+      if (txIds.length > 0) {
+        await tx.ledgerEntry.deleteMany({
+          where: { transactionId: { in: txIds } },
+        });
+        await tx.transaction.deleteMany({
+          where: { id: { in: txIds } },
+        });
+      }
+
+      await tx.deviceFingerprint.deleteMany({ where: { userId: client.userId } });
+      await tx.biometricFingerprint.deleteMany({ where: { userId: client.userId } });
+
+      await tx.clientProfile.delete({
+        where: { id },
+      });
+
+      await tx.user.delete({
+        where: { id: client.userId },
+      });
+    });
+
+    res.json({ message: 'Client deleted successfully' });
+  } catch (error: any) {
+    console.error(error);
+    res.status(400).json({ error: error.message || 'Failed to delete client' });
+  }
+});
+
 export default router;

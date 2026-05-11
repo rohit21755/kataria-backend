@@ -187,8 +187,11 @@ router.post('/', authorize(['SUPER_ADMIN', 'OFFICE_STAFF', 'FIELD_WORKER']), asy
         else dailyCashUpdate.bankOut = { increment: bAmt };
       }
 
-      // openingBalance is set to 0 for a new day per business requirement
-      const openingBalance = 0;
+      const prevDailyCash = await tx.dailyCash.findFirst({
+        where: { date: { lt: today } },
+        orderBy: { date: 'desc' },
+      });
+      const openingBalance = prevDailyCash?.closingBalance ?? 0;
 
       await tx.dailyCash.upsert({
         where: { date: today },
@@ -311,6 +314,54 @@ router.post('/:id/reverse', authorize(['SUPER_ADMIN']), async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Reversal failed' });
+  }
+});
+
+router.delete('/:id', authorize(['SUPER_ADMIN', 'OFFICE_STAFF']), async (req, res) => {
+  const id = req.params.id as string;
+  try {
+    await prisma.$transaction(async (tx) => {
+      const original = await tx.transaction.findUnique({ where: { id } });
+      if (!original) throw new Error('Transaction not found');
+
+      if (original.status === 'COMPLETED') {
+        const txDate = new Date(original.createdAt);
+        txDate.setHours(0, 0, 0, 0);
+
+        const dailyCashReversal: Record<string, unknown> = {};
+        if (original.method === 'CASH' || original.method === 'CASH_BANK') {
+          const cAmt = original.method === 'CASH' ? original.amount : (original.cashAmount ?? 0);
+          if (original.direction === 'IN') dailyCashReversal.cashIn = { decrement: cAmt };
+          else dailyCashReversal.cashOut = { decrement: cAmt };
+        }
+        if (original.method === 'BANK' || original.method === 'CASH_BANK') {
+          const bAmt = original.method === 'BANK' ? original.amount : (original.bankAmount ?? 0);
+          if (original.direction === 'IN') dailyCashReversal.bankIn = { decrement: bAmt };
+          else dailyCashReversal.bankOut = { decrement: bAmt };
+        }
+
+        await tx.dailyCash.updateMany({
+          where: { date: txDate },
+          data: {
+            ...(dailyCashReversal as object),
+            closingBalance: { increment: original.direction === 'IN' ? -original.amount : original.amount },
+          },
+        });
+      }
+
+      await tx.ledgerEntry.deleteMany({
+        where: { transactionId: id },
+      });
+
+      await tx.transaction.delete({
+        where: { id },
+      });
+    });
+
+    res.json({ message: 'Transaction deleted successfully' });
+  } catch (error: any) {
+    console.error(error);
+    res.status(400).json({ error: error.message || 'Failed to delete transaction' });
   }
 });
 

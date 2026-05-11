@@ -40,7 +40,27 @@ router.get('/dashboard-summary', async (req, res) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const dailyCash = await prisma.dailyCash.findFirst({ where: { date: today } });
+    let dailyCash = await prisma.dailyCash.findFirst({ where: { date: today } });
+    if (!dailyCash) {
+      const lastRecord = await prisma.dailyCash.findFirst({
+        where: { date: { lt: today } },
+        orderBy: { date: 'desc' },
+      });
+      if (lastRecord) {
+        dailyCash = {
+          id: '',
+          date: today,
+          openingBalance: lastRecord.closingBalance,
+          cashIn: 0,
+          cashOut: 0,
+          bankIn: 0,
+          bankOut: 0,
+          closingBalance: lastRecord.closingBalance,
+          updatedAt: new Date(),
+        };
+      }
+    }
+
     const txnCount = await prisma.transaction.count({ where: { status: 'COMPLETED' } });
 
     res.json({

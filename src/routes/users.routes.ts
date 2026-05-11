@@ -61,4 +61,80 @@ router.put('/:id', async (req, res) => {
   }
 });
 
+router.delete('/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({
+        where: { id },
+        include: { clientProfile: true },
+      });
+
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      if (user.clientProfile) {
+        const clientProfile = user.clientProfile;
+
+        await tx.ledgerEntry.deleteMany({
+          where: { userId: user.id },
+        });
+
+        const txs = await tx.transaction.findMany({
+          where: { clientId: clientProfile.id },
+        });
+
+        const txIds = txs.map(t => t.id);
+
+        if (txIds.length > 0) {
+          await tx.ledgerEntry.deleteMany({
+            where: { transactionId: { in: txIds } },
+          });
+          await tx.transaction.deleteMany({
+            where: { id: { in: txIds } },
+          });
+        }
+
+        await tx.clientProfile.delete({
+          where: { id: clientProfile.id },
+        });
+      }
+
+      await tx.deviceFingerprint.deleteMany({ where: { userId: id } });
+      await tx.biometricFingerprint.deleteMany({ where: { userId: id } });
+      await tx.ledgerEntry.deleteMany({ where: { userId: id } });
+
+      await tx.user.delete({ where: { id } });
+    });
+
+    res.json({ message: 'User deleted successfully' });
+  } catch (error: any) {
+    console.error(error);
+    res.status(400).json({ error: error.message || 'Failed to delete user' });
+  }
+});
+
+router.post('/:id/reset-password', authorize(['SUPER_ADMIN']), async (req, res) => {
+  const id = req.params.id as string;
+  const { password } = req.body;
+
+  if (!password || password.trim() === '') {
+    return res.status(400).json({ error: 'Password is required' });
+  }
+
+  try {
+    const passwordHash = await bcrypt.hash(password, 10);
+    await prisma.user.update({
+      where: { id },
+      data: { passwordHash },
+    });
+    res.json({ message: 'Password updated successfully' });
+  } catch (error: any) {
+    console.error(error);
+    res.status(400).json({ error: 'Failed to update password' });
+  }
+});
+
 export default router;
+
