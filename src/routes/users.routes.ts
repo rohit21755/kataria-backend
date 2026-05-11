@@ -136,5 +136,21 @@ router.post('/:id/reset-password', authorize(['SUPER_ADMIN']), async (req, res) 
   }
 });
 
+router.get('/by-username/:username', async (req, res) => {
+  const username = req.params.username as string;
+  try {
+    const user = await prisma.user.findUnique({
+      where: { username },
+      select: { id: true, firstName: true, lastName: true, role: true }
+    });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json(user);
+  } catch (error: any) {
+    res.status(400).json({ error: 'Failed to look up user' });
+  }
+});
+
 export default router;
 
