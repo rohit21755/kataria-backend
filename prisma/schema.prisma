@@ -118,6 +118,7 @@ model Transaction {
   office            Office?  @relation(fields: [officeId], references: [id])
 
   clientSignature   String?
+  authorizedSignature String?
 
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt

@@ -67,6 +67,7 @@ router.post('/', authorize(['SUPER_ADMIN', 'OFFICE_STAFF', 'FIELD_WORKER']), asy
     agentName,
     agentPhone,
     clientSignature,
+    authorizedSignature,
     // performedById can be overridden (for office WebAuthn flow)
     // if not provided, defaults to the JWT user
     performedById: overridePerformerId,
@@ -149,6 +150,7 @@ router.post('/', authorize(['SUPER_ADMIN', 'OFFICE_STAFF', 'FIELD_WORKER']), asy
           agentName: agentName || null,
           agentPhone: agentPhone || null,
           clientSignature: clientSignature || null,
+          authorizedSignature: authorizedSignature || null,
           status: 'COMPLETED',
           createdAt: customDate || undefined,
         },
