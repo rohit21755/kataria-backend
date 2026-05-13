@@ -55,7 +55,17 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'firstName and phone are required' });
   }
 
-  const customDate = createdAt ? new Date(createdAt) : null;
+  let customDate: Date | null = null;
+  if (createdAt) {
+    const parsedDate = new Date(createdAt);
+    if (!isNaN(parsedDate.getTime())) {
+      customDate = parsedDate;
+      if (typeof createdAt === 'string' && createdAt.length === 10 && /^\d{4}-\d{2}-\d{2}$/.test(createdAt)) {
+        const now = new Date();
+        customDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+      }
+    }
+  }
 
   try {
     const result = await prisma.$transaction(async (tx) => {
