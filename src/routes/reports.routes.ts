@@ -309,6 +309,18 @@ router.put('/daily-cash/:date', async (req, res) => {
   }
 });
 
+router.delete('/daily-cash/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const deleted = await prisma.dailyCash.delete({
+      where: { id },
+    });
+    res.json(deleted);
+  } catch (err) {
+    res.status(400).json({ error: 'Failed to delete daily cash record' });
+  }
+});
+
 router.post('/daily-cash/settle', async (req, res) => {
   try {
     const today = new Date();

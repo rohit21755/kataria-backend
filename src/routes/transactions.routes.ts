@@ -70,6 +70,7 @@ router.post('/', authorize(['SUPER_ADMIN', 'OFFICE_STAFF', 'FIELD_WORKER']), asy
     // performedById can be overridden (for office WebAuthn flow)
     // if not provided, defaults to the JWT user
     performedById: overridePerformerId,
+    createdAt,
   } = req.body;
 
   const jwtUserId = req.user!.userId;
@@ -101,14 +102,16 @@ router.post('/', authorize(['SUPER_ADMIN', 'OFFICE_STAFF', 'FIELD_WORKER']), asy
   }
 
   // Determine the actual performer
-  // Super Admin creates from super_admin app → performer = admin themselves, label = "Admin"
-  // Office dashboard sends overridePerformerId (WebAuthn-identified user)
-  // Mobile (FIELD_WORKER) → performer = JWT user, label = their full name
   let effectivePerformerId = jwtUserId;
 
   if (overridePerformerId && (jwtRole === 'SUPER_ADMIN' || jwtRole === 'OFFICE_STAFF')) {
     effectivePerformerId = overridePerformerId;
   }
+
+  const customDate = createdAt ? new Date(createdAt) : null;
+  const txDate = customDate ? new Date(customDate) : new Date();
+  const txDay = new Date(txDate);
+  txDay.setHours(0, 0, 0, 0);
 
   try {
     const [performerUser, clientProfile] = await Promise.all([
@@ -147,6 +150,7 @@ router.post('/', authorize(['SUPER_ADMIN', 'OFFICE_STAFF', 'FIELD_WORKER']), asy
           agentPhone: agentPhone || null,
           clientSignature: clientSignature || null,
           status: 'COMPLETED',
+          createdAt: customDate || undefined,
         },
         include: {
           client: { include: { user: { select: { firstName: true, lastName: true } } } },
@@ -170,13 +174,11 @@ router.post('/', authorize(['SUPER_ADMIN', 'OFFICE_STAFF', 'FIELD_WORKER']), asy
           credit: isCredit ? Number(amount) : 0,
           debit: isCredit ? 0 : Number(amount),
           balanceAfter: newBalance,
+          createdAt: customDate || undefined,
         },
       });
 
       // Update DailyCash
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
       const dailyCashUpdate: Record<string, unknown> = { updatedAt: new Date() };
       if (method === 'CASH' || method === 'CASH_BANK') {
         const cAmt = method === 'CASH' ? Number(amount) : Number(cashAmount);
@@ -190,15 +192,15 @@ router.post('/', authorize(['SUPER_ADMIN', 'OFFICE_STAFF', 'FIELD_WORKER']), asy
       }
 
       const prevDailyCash = await tx.dailyCash.findFirst({
-        where: { date: { lt: today } },
+        where: { date: { lt: txDay } },
         orderBy: { date: 'desc' },
       });
       const openingBalance = prevDailyCash?.closingBalance ?? 0;
 
       await tx.dailyCash.upsert({
-        where: { date: today },
+        where: { date: txDay },
         create: {
-          date: today,
+          date: txDay,
           openingBalance,
           cashIn: (method === 'CASH' || method === 'CASH_BANK') && direction === 'IN'
             ? Number(method === 'CASH' ? amount : cashAmount) : 0,
@@ -223,6 +225,7 @@ router.post('/', authorize(['SUPER_ADMIN', 'OFFICE_STAFF', 'FIELD_WORKER']), asy
           entityId: transaction.id,
           performedBy: jwtUserId,
           details: { direction, method, amount, clientId, performedByLabel },
+          createdAt: customDate || undefined,
         },
       });
 
@@ -364,6 +367,33 @@ router.delete('/:id', authorize(['SUPER_ADMIN', 'OFFICE_STAFF']), async (req, re
   } catch (error: any) {
     console.error(error);
     res.status(400).json({ error: error.message || 'Failed to delete transaction' });
+  }
+});
+
+router.put('/:id', authorize(['SUPER_ADMIN', 'OFFICE_STAFF']), async (req, res) => {
+  const id = req.params.id as string;
+  const { description, agentName, agentPhone, method, bankAccountNumber, bankName, ifscCode, bankReference, companyBankAccount } = req.body;
+  try {
+    const updated = await prisma.transaction.update({
+      where: { id },
+      data: {
+        description,
+        agentName,
+        agentPhone,
+        method,
+        bankAccountNumber,
+        bankName,
+        ifscCode,
+        bankReference,
+        companyBankAccount
+      },
+      include: {
+        client: { include: { user: { select: { firstName: true, lastName: true } } } },
+      }
+    });
+    res.json(updated);
+  } catch (err) {
+    res.status(400).json({ error: 'Failed to update transaction' });
   }
 });
 

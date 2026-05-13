@@ -40,6 +40,7 @@ router.post('/', async (req, res) => {
     type = 'CLIENT',
     fingerprintVerified = false,
     createdById: overrideCreatedById,
+    createdAt,
   } = req.body;
 
   const jwtUserId = req.user!.userId;
@@ -54,6 +55,8 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'firstName and phone are required' });
   }
 
+  const customDate = createdAt ? new Date(createdAt) : null;
+
   try {
     const result = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
@@ -64,6 +67,7 @@ router.post('/', async (req, res) => {
           firstName,
           lastName: lastName || '',
           phone,
+          createdAt: customDate || undefined,
         },
       });
 
@@ -77,6 +81,7 @@ router.post('/', async (req, res) => {
           notes,
           fingerprintVerified,
           createdById,
+          createdAt: customDate || undefined,
         },
         include: {
           user: { select: { firstName: true, lastName: true, phone: true } },
@@ -94,6 +99,7 @@ router.post('/', async (req, res) => {
               credit: isCredit ? bal : 0,
               debit: isCredit ? 0 : bal,
               balanceAfter: isCredit ? bal : -bal,
+              createdAt: customDate || undefined,
             },
           });
         }
@@ -106,6 +112,7 @@ router.post('/', async (req, res) => {
           entityId: client.id,
           performedBy: createdById,
           details: { firstName, lastName, phone, type, openingBalance, openingBalanceType },
+          createdAt: customDate || undefined,
         },
       });
 
@@ -142,11 +149,24 @@ router.get('/:id', async (req, res) => {
 });
 
 router.put('/:id', authorize(['SUPER_ADMIN', 'OFFICE_STAFF']), async (req, res) => {
-  const { address, idProofType, idProofNumber, notes, fingerprintVerified } = req.body;
+  const { address, idProofType, idProofNumber, notes, fingerprintVerified, firstName, lastName, phone } = req.body;
   try {
     const client = await prisma.clientProfile.update({
       where: { id: req.params.id as string },
-      data: { address, idProofType, idProofNumber, notes, fingerprintVerified },
+      data: { 
+        address, 
+        idProofType, 
+        idProofNumber, 
+        notes, 
+        fingerprintVerified,
+        user: {
+          update: {
+            firstName: firstName !== undefined ? firstName : undefined,
+            lastName: lastName !== undefined ? lastName : undefined,
+            phone: phone !== undefined ? phone : undefined,
+          }
+        }
+      },
       include: {
         user: { select: { firstName: true, lastName: true, phone: true } },
       },
