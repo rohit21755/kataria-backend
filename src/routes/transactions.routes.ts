@@ -190,45 +190,51 @@ router.post('/', authorize(['SUPER_ADMIN', 'OFFICE_STAFF', 'FIELD_WORKER']), asy
         },
       });
 
-      // Update DailyCash
-      const dailyCashUpdate: Record<string, unknown> = { updatedAt: new Date() };
-      if (method === 'CASH' || method === 'CASH_BANK') {
-        const cAmt = method === 'CASH' ? Number(amount) : Number(cashAmount);
-        if (direction === 'IN') dailyCashUpdate.cashIn = { increment: cAmt };
-        else dailyCashUpdate.cashOut = { increment: cAmt };
-      }
-      if (method === 'BANK' || method === 'CASH_BANK') {
-        const bAmt = method === 'BANK' ? Number(amount) : Number(bankAmount);
-        if (direction === 'IN') dailyCashUpdate.bankIn = { increment: bAmt };
-        else dailyCashUpdate.bankOut = { increment: bAmt };
-      }
+      // Update DailyCash (Only if the transaction is for today)
+      const todayAtMidnight = new Date();
+      todayAtMidnight.setHours(0, 0, 0, 0);
+      const isTodayTransaction = txDay.getTime() === todayAtMidnight.getTime();
 
-      const prevDailyCash = await tx.dailyCash.findFirst({
-        where: { date: { lt: txDay } },
-        orderBy: { date: 'desc' },
-      });
-      const openingBalance = prevDailyCash?.closingBalance ?? 0;
+      if (isTodayTransaction) {
+        const dailyCashUpdate: Record<string, unknown> = { updatedAt: new Date() };
+        if (method === 'CASH' || method === 'CASH_BANK') {
+          const cAmt = method === 'CASH' ? Number(amount) : Number(cashAmount);
+          if (direction === 'IN') dailyCashUpdate.cashIn = { increment: cAmt };
+          else dailyCashUpdate.cashOut = { increment: cAmt };
+        }
+        if (method === 'BANK' || method === 'CASH_BANK') {
+          const bAmt = method === 'BANK' ? Number(amount) : Number(bankAmount);
+          if (direction === 'IN') dailyCashUpdate.bankIn = { increment: bAmt };
+          else dailyCashUpdate.bankOut = { increment: bAmt };
+        }
 
-      await tx.dailyCash.upsert({
-        where: { date: txDay },
-        create: {
-          date: txDay,
-          openingBalance,
-          cashIn: (method === 'CASH' || method === 'CASH_BANK') && direction === 'IN'
-            ? Number(method === 'CASH' ? amount : cashAmount) : 0,
-          cashOut: (method === 'CASH' || method === 'CASH_BANK') && direction === 'OUT'
-            ? Number(method === 'CASH' ? amount : cashAmount) : 0,
-          bankIn: (method === 'BANK' || method === 'CASH_BANK') && direction === 'IN'
-            ? Number(method === 'BANK' ? amount : bankAmount) : 0,
-          bankOut: (method === 'BANK' || method === 'CASH_BANK') && direction === 'OUT'
-            ? Number(method === 'BANK' ? amount : bankAmount) : 0,
-          closingBalance: direction === 'IN' ? openingBalance + Number(amount) : openingBalance - Number(amount),
-        },
-        update: {
-          ...(dailyCashUpdate as object),
-          closingBalance: { increment: direction === 'IN' ? Number(amount) : -Number(amount) },
-        },
-      });
+        const prevDailyCash = await tx.dailyCash.findFirst({
+          where: { date: { lt: txDay } },
+          orderBy: { date: 'desc' },
+        });
+        const openingBalance = prevDailyCash?.closingBalance ?? 0;
+
+        await tx.dailyCash.upsert({
+          where: { date: txDay },
+          create: {
+            date: txDay,
+            openingBalance,
+            cashIn: (method === 'CASH' || method === 'CASH_BANK') && direction === 'IN'
+              ? Number(method === 'CASH' ? amount : cashAmount) : 0,
+            cashOut: (method === 'CASH' || method === 'CASH_BANK') && direction === 'OUT'
+              ? Number(method === 'CASH' ? amount : cashAmount) : 0,
+            bankIn: (method === 'BANK' || method === 'CASH_BANK') && direction === 'IN'
+              ? Number(method === 'BANK' ? amount : bankAmount) : 0,
+            bankOut: (method === 'BANK' || method === 'CASH_BANK') && direction === 'OUT'
+              ? Number(method === 'BANK' ? amount : bankAmount) : 0,
+            closingBalance: direction === 'IN' ? openingBalance + Number(amount) : openingBalance - Number(amount),
+          },
+          update: {
+            ...(dailyCashUpdate as object),
+            closingBalance: { increment: direction === 'IN' ? Number(amount) : -Number(amount) },
+          },
+        });
+      }
 
       await tx.auditLog.create({
         data: {
@@ -292,28 +298,34 @@ router.post('/:id/reverse', authorize(['SUPER_ADMIN']), async (req, res) => {
         },
       });
 
-      // Reverse DailyCash
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const dailyCashReversal: Record<string, unknown> = {};
-      if (original.method === 'CASH' || original.method === 'CASH_BANK') {
-        const cAmt = original.method === 'CASH' ? original.amount : (original.cashAmount ?? 0);
-        if (original.direction === 'IN') dailyCashReversal.cashIn = { decrement: cAmt };
-        else dailyCashReversal.cashOut = { decrement: cAmt };
-      }
-      if (original.method === 'BANK' || original.method === 'CASH_BANK') {
-        const bAmt = original.method === 'BANK' ? original.amount : (original.bankAmount ?? 0);
-        if (original.direction === 'IN') dailyCashReversal.bankIn = { decrement: bAmt };
-        else dailyCashReversal.bankOut = { decrement: bAmt };
-      }
+      // Reverse DailyCash (Only if original transaction was for today)
+      const origDate = new Date(original.createdAt);
+      origDate.setHours(0, 0, 0, 0);
 
-      await tx.dailyCash.updateMany({
-        where: { date: today },
-        data: {
-          ...(dailyCashReversal as object),
-          closingBalance: { increment: original.direction === 'IN' ? -original.amount : original.amount },
-        },
-      });
+      const todayAtMidnight = new Date();
+      todayAtMidnight.setHours(0, 0, 0, 0);
+
+      if (origDate.getTime() === todayAtMidnight.getTime()) {
+        const dailyCashReversal: Record<string, unknown> = {};
+        if (original.method === 'CASH' || original.method === 'CASH_BANK') {
+          const cAmt = original.method === 'CASH' ? original.amount : (original.cashAmount ?? 0);
+          if (original.direction === 'IN') dailyCashReversal.cashIn = { decrement: cAmt };
+          else dailyCashReversal.cashOut = { decrement: cAmt };
+        }
+        if (original.method === 'BANK' || original.method === 'CASH_BANK') {
+          const bAmt = original.method === 'BANK' ? original.amount : (original.bankAmount ?? 0);
+          if (original.direction === 'IN') dailyCashReversal.bankIn = { decrement: bAmt };
+          else dailyCashReversal.bankOut = { decrement: bAmt };
+        }
+
+        await tx.dailyCash.updateMany({
+          where: { date: todayAtMidnight },
+          data: {
+            ...(dailyCashReversal as object),
+            closingBalance: { increment: original.direction === 'IN' ? -original.amount : original.amount },
+          },
+        });
+      }
 
       await tx.auditLog.create({
         data: {
@@ -345,25 +357,30 @@ router.delete('/:id', authorize(['SUPER_ADMIN', 'OFFICE_STAFF']), async (req, re
         const txDate = new Date(original.createdAt);
         txDate.setHours(0, 0, 0, 0);
 
-        const dailyCashReversal: Record<string, unknown> = {};
-        if (original.method === 'CASH' || original.method === 'CASH_BANK') {
-          const cAmt = original.method === 'CASH' ? original.amount : (original.cashAmount ?? 0);
-          if (original.direction === 'IN') dailyCashReversal.cashIn = { decrement: cAmt };
-          else dailyCashReversal.cashOut = { decrement: cAmt };
-        }
-        if (original.method === 'BANK' || original.method === 'CASH_BANK') {
-          const bAmt = original.method === 'BANK' ? original.amount : (original.bankAmount ?? 0);
-          if (original.direction === 'IN') dailyCashReversal.bankIn = { decrement: bAmt };
-          else dailyCashReversal.bankOut = { decrement: bAmt };
-        }
+        const todayAtMidnight = new Date();
+        todayAtMidnight.setHours(0, 0, 0, 0);
 
-        await tx.dailyCash.updateMany({
-          where: { date: txDate },
-          data: {
-            ...(dailyCashReversal as object),
-            closingBalance: { increment: original.direction === 'IN' ? -original.amount : original.amount },
-          },
-        });
+        if (txDate.getTime() === todayAtMidnight.getTime()) {
+          const dailyCashReversal: Record<string, unknown> = {};
+          if (original.method === 'CASH' || original.method === 'CASH_BANK') {
+            const cAmt = original.method === 'CASH' ? original.amount : (original.cashAmount ?? 0);
+            if (original.direction === 'IN') dailyCashReversal.cashIn = { decrement: cAmt };
+            else dailyCashReversal.cashOut = { decrement: cAmt };
+          }
+          if (original.method === 'BANK' || original.method === 'CASH_BANK') {
+            const bAmt = original.method === 'BANK' ? original.amount : (original.bankAmount ?? 0);
+            if (original.direction === 'IN') dailyCashReversal.bankIn = { decrement: bAmt };
+            else dailyCashReversal.bankOut = { decrement: bAmt };
+          }
+
+          await tx.dailyCash.updateMany({
+            where: { date: txDate },
+            data: {
+              ...(dailyCashReversal as object),
+              closingBalance: { increment: original.direction === 'IN' ? -original.amount : original.amount },
+            },
+          });
+        }
       }
 
       await tx.ledgerEntry.deleteMany({
