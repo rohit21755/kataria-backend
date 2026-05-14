@@ -122,14 +122,26 @@ router.get('/balance', async (req, res) => {
       }
     }
 
-    // Opening balance = closing balance just before the period start
-    const prevTxns = await prisma.transaction.findMany({
-      where: { status: 'COMPLETED', createdAt: { lt: start } },
-      select: { direction: true, amount: true },
-    });
     let openingBalance = 0;
-    for (const t of prevTxns) {
-      openingBalance += t.direction === 'IN' ? t.amount : -t.amount;
+    const dailyCash = await prisma.dailyCash.findUnique({ where: { date: start } });
+    if (dailyCash) {
+      openingBalance = dailyCash.openingBalance;
+    } else {
+      const prevDaily = await prisma.dailyCash.findFirst({
+        where: { date: { lt: start } },
+        orderBy: { date: 'desc' },
+      });
+      if (prevDaily) {
+        openingBalance = prevDaily.closingBalance;
+      } else {
+        const prevTxns = await prisma.transaction.findMany({
+          where: { status: 'COMPLETED', createdAt: { lt: start } },
+          select: { direction: true, amount: true },
+        });
+        for (const t of prevTxns) {
+          openingBalance += t.direction === 'IN' ? t.amount : -t.amount;
+        }
+      }
     }
 
     const closingBalance = openingBalance + totalIn - totalOut;
@@ -296,16 +308,53 @@ router.put('/daily-cash/:date', async (req, res) => {
   try {
     const d = new Date(date);
     d.setHours(0, 0, 0, 0);
+
+    let existing = await prisma.dailyCash.findUnique({ where: { date: d } });
+    if (!existing) {
+      const prev = await prisma.dailyCash.findFirst({
+        where: { date: { lt: d } },
+        orderBy: { date: 'desc' },
+      });
+      existing = await prisma.dailyCash.create({
+        data: {
+          date: d,
+          openingBalance: prev?.closingBalance ?? 0,
+          closingBalance: prev?.closingBalance ?? 0,
+        },
+      });
+    }
+
+    const endOfDay = new Date(d);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const txns = await prisma.transaction.findMany({
+      where: {
+        status: 'COMPLETED',
+        createdAt: { gte: d, lte: endOfDay },
+      },
+      select: { direction: true, amount: true },
+    });
+
+    let netTxnAmount = 0;
+    for (const t of txns) {
+      netTxnAmount += t.direction === 'IN' ? t.amount : -t.amount;
+    }
+
+    const newOpening = openingBalance !== undefined ? Number(openingBalance) : existing.openingBalance;
+    const newClosing = closingBalance !== undefined ? Number(closingBalance) : newOpening + netTxnAmount;
+
     const updated = await prisma.dailyCash.update({
       where: { date: d },
       data: {
-        openingBalance: openingBalance !== undefined ? Number(openingBalance) : undefined,
-        closingBalance: closingBalance !== undefined ? Number(closingBalance) : undefined,
-      }
+        openingBalance: newOpening,
+        closingBalance: newClosing,
+      },
     });
+
     res.json(updated);
-  } catch (err) {
-    res.status(400).json({ error: 'Failed to update daily cash' });
+  } catch (err: any) {
+    console.error(err);
+    res.status(400).json({ error: err.message || 'Failed to update daily cash' });
   }
 });
 
