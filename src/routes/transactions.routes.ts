@@ -257,6 +257,66 @@ router.post('/', authorize(['SUPER_ADMIN', 'OFFICE_STAFF', 'FIELD_WORKER']), asy
   }
 });
 
+router.post('/bulk-delete', authorize(['SUPER_ADMIN', 'OFFICE_STAFF']), async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'ids array is required' });
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const originals = await tx.transaction.findMany({
+        where: { id: { in: ids } },
+      });
+
+      const todayAtMidnight = new Date();
+      todayAtMidnight.setHours(0, 0, 0, 0);
+
+      for (const original of originals) {
+        if (original.status === 'COMPLETED') {
+          const txDate = new Date(original.createdAt);
+          txDate.setHours(0, 0, 0, 0);
+
+          if (txDate.getTime() === todayAtMidnight.getTime()) {
+            const dailyCashReversal: Record<string, unknown> = {};
+            if (original.method === 'CASH' || original.method === 'CASH_BANK') {
+              const cAmt = original.method === 'CASH' ? original.amount : (original.cashAmount ?? 0);
+              if (original.direction === 'IN') dailyCashReversal.cashIn = { decrement: cAmt };
+              else dailyCashReversal.cashOut = { decrement: cAmt };
+            }
+            if (original.method === 'BANK' || original.method === 'CASH_BANK') {
+              const bAmt = original.method === 'BANK' ? original.amount : (original.bankAmount ?? 0);
+              if (original.direction === 'IN') dailyCashReversal.bankIn = { decrement: bAmt };
+              else dailyCashReversal.bankOut = { decrement: bAmt };
+            }
+
+            await tx.dailyCash.updateMany({
+              where: { date: txDate },
+              data: {
+                ...(dailyCashReversal as object),
+                closingBalance: { increment: original.direction === 'IN' ? -original.amount : original.amount },
+              },
+            });
+          }
+        }
+      }
+
+      await tx.ledgerEntry.deleteMany({
+        where: { transactionId: { in: ids } },
+      });
+
+      await tx.transaction.deleteMany({
+        where: { id: { in: ids } },
+      });
+    });
+
+    res.json({ message: 'Transactions deleted successfully' });
+  } catch (error: any) {
+    console.error(error);
+    res.status(400).json({ error: error.message || 'Failed to delete transactions' });
+  }
+});
+
 router.post('/:id/reverse', authorize(['SUPER_ADMIN']), async (req, res) => {
   const id = req.params.id as string;
   const performedById = req.user!.userId;
